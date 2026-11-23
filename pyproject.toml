@@ -1,7 +1,7 @@
 [project]
 name = "arctic-sea-ice"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible analysis of Arctic sea ice extent and area from Copernicus Marine satellite data, validated against NSIDC."
 readme = "README.md"
 authors = [
     { name = "MariusMunteanu", email = "mmunteanu54321@gmail.com" }

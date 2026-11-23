@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, type-check and test (Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.13.6"
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Verify uv.lock is in sync with pyproject.toml
+        run: uv lock --check
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Pre-commit hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Tests with coverage
+        run: uv run pytest --cov --cov-report=term-missing

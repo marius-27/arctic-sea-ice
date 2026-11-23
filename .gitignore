@@ -11,6 +11,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Test coverage output (pytest-cov)
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # IDE settings
 .idea/
 

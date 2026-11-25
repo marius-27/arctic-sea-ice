@@ -163,6 +163,19 @@ def test_domain_limit_is_configurable() -> None:
     assert result["sic"].isel(time=0).sel(latitude=38.0).values[0] == pytest.approx(0.5)
 
 
+def test_domain_edge_tolerates_floating_point_noise() -> None:
+    # The 1979-2020 record stores 40 N as 39.999999999999915.
+    ds = _dataset(CONC, FLAGS, latitude=(39.999999999999915, 60.0))
+
+    assert bool(normalize(ds)["ocean"].isel(time=0, latitude=0).all())
+
+
+def test_domain_edge_still_excludes_the_row_below() -> None:
+    ds = _dataset(CONC, FLAGS, latitude=(39.8, 60.0))
+
+    assert not bool(normalize(ds)["ocean"].isel(latitude=0).any())
+
+
 def test_flags_are_read_per_day(result: xr.Dataset) -> None:
     # The same cell is ocean on day 1 and lake on day 2.
     assert result["ocean"].sel(latitude=60.0, longitude=0.0).values.tolist() == [True, False]

@@ -32,6 +32,11 @@ DOMAIN_MINIMUM_LATITUDE = 40.0
 # Concentrations may exceed 1 by floating-point noise (e.g. 100.00000000000003 %).
 RANGE_TOLERANCE = 1e-6
 
+# Stored latitudes carry floating-point noise too: the 1979-2020 record stores 40 N as
+# 39.999999999999915. Without a tolerance that whole row would leave the domain in one
+# record but not in the other.
+LATITUDE_TOLERANCE = 1e-6
+
 
 class StatusFlag(IntFlag):
     """Bits of the OSI SAF ``status_flag`` variable (``flag_masks`` / ``flag_meanings``)."""
@@ -113,7 +118,7 @@ def normalize(
         excluded = xr.zeros_like(sic, dtype=bool)
         interpolated = xr.zeros_like(sic, dtype=bool)
 
-    in_domain = ds["latitude"] >= minimum_latitude
+    in_domain = ds["latitude"] >= minimum_latitude - LATITUDE_TOLERANCE
     ocean = (in_domain & ~excluded).broadcast_like(sic)
     sic = sic.where(ocean)
     missing = ocean & sic.isnull()

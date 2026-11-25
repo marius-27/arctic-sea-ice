@@ -10,6 +10,7 @@ Current layout:
 ```text
 arctic-sea-ice/
 ├── .github/workflows/ci.yml   CI: lock check, pre-commit, mypy, pytest
+├── configs/data_manifest.yaml generated data manifest (datasets, versions, schema)
 ├── docs/                      research plan (PDF), scientific scope, this guide
 ├── src/arctic_sea_ice/        the Python package
 ├── tests/                     pytest test suite
@@ -22,8 +23,8 @@ Planned additions (research plan, section 9), created in the stage that first ne
 
 | Path | Contents | Stage |
 |---|---|---|
-| `configs/` | `data_manifest.yaml`, `regions.geojson` | catalog discovery, seasonal anomalies |
-| `src/arctic_sea_ice/` | `catalog.py`, `ingest.py`, `qc.py`, `metrics.py`, `trends.py` | one module per stage |
+| `configs/` | `regions.geojson` | seasonal anomalies |
+| `src/arctic_sea_ice/` | `ingest.py`, `qc.py`, `metrics.py`, `trends.py` | one module per stage |
 | `notebooks/` | `01_explore.ipynb`, `02_research.ipynb` | exploration and research |
 | `reports/` | `results.md`, `methods.md`, `comparison.csv` | benchmark and final report |
 | `reports/figures/` | versioned figures (no raw data) | maps and dashboard |
@@ -100,6 +101,25 @@ The commands are listed in the [README](../README.md#development-commands).
 CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`. It
 checks that `uv.lock` is in sync, installs the locked dependencies, runs all pre-commit
 hooks, runs mypy and runs the tests with coverage.
+
+## Data manifest
+
+`configs/data_manifest.yaml` lists every Arctic dataset of the planned Copernicus Marine
+products with its version, parts (`default` latitude-longitude grid and, where published,
+`originalGrid` projected grid), coordinates, temporal coverage and variables with units.
+It is generated from the live catalogue (`copernicusmarine describe`, no credentials
+needed) and is never edited by hand:
+
+```bash
+uv run python -m arctic_sea_ice.catalog              # print the product listing
+uv run python -m arctic_sea_ice.catalog --manifest   # regenerate configs/data_manifest.yaml
+```
+
+The manifest records the toolbox version and the retrieval date. Given the same catalogue,
+regenerating it produces the same file, so `git diff` shows exactly what changed upstream.
+`tests/test_data_manifest.py` checks the committed manifest offline: planned datasets
+present, concentration units, grids and temporal coverage. Known gaps are encoded as
+strict `xfail` tests, which fail as soon as the catalogue closes the gap.
 
 ## Data policy
 

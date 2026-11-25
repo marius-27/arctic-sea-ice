@@ -9,7 +9,9 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "copernicusmarine>=2.5.2",
+    "numpy>=2.5.5",
     "pyyaml>=6.0.4",
+    "xarray>=2026.9.0",
 ]
 
 [project.scripts]
@@ -78,6 +80,9 @@ minversion = "9.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true
+markers = [
+    "data: reads files downloaded into data/raw; skipped when they are absent (e.g. in CI)",
+]
 
 [tool.coverage.run]
 source = ["arctic_sea_ice"]

@@ -14,7 +14,12 @@ Data are cached as one NetCDF file per dataset part and calendar month, each wit
 sidecar holding its provenance and SHA-256 checksum (``ChunkCache``). A rerun downloads
 only the months that are missing or no longer match the request.
 
-Run ``uv run python -m arctic_sea_ice.ingest --check-login`` to verify the login.
+What to download is set in ``configs/ingest.yaml`` and checked against the data manifest
+(``configs/data_manifest.yaml``) before anything is requested. Usage::
+
+    uv run python -m arctic_sea_ice.ingest --check-login
+    uv run python -m arctic_sea_ice.ingest --download                       # everything
+    uv run python -m arctic_sea_ice.ingest --download --start 2012-09-01 --end 2012-09-30
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ from datetime import UTC, date, datetime
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, Literal, Protocol
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -379,16 +386,214 @@ class ChunkCache:
         temporary.replace(metadata_path)
 
 
+# --- Download configuration -----------------------------------------------------
+
+DEFAULT_CONFIG_PATH = Path("configs") / "ingest.yaml"
+DEFAULT_MANIFEST_PATH = Path("configs") / "data_manifest.yaml"
+
+_SERIES_FIELDS = {"description", "dataset_id", "version", "part", "variables", "start", "end"}
+_OPTIONAL_SERIES_FIELDS = {"description", "minimum_latitude"}
+
+
+@dataclass(frozen=True)
+class Series:
+    """A named dataset period to download, e.g. ``cdr`` for 1979-2020."""
+
+    name: str
+    description: str
+    request: SubsetRequest
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    data_directory: Path
+    series: tuple[Series, ...]
+
+    def select(self, names: Sequence[str] | None) -> tuple[Series, ...]:
+        """The series with the given names, in configuration order (all if ``None``)."""
+        if not names:
+            return self.series
+        known = {s.name for s in self.series}
+        unknown = sorted(set(names) - known)
+        if unknown:
+            raise ValueError(f"Unknown series {unknown}; configured: {sorted(known)}")
+        return tuple(s for s in self.series if s.name in names)
+
+
+def _as_date(value: Any, field: str) -> date:
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        raise ValueError(f"{field} must be a date (YYYY-MM-DD), got {value!r}") from None
+
+
+def _parse_series(name: str, fields: Any) -> Series:
+    if not isinstance(fields, dict):
+        raise ValueError(f"Series {name!r} must be a mapping")
+    allowed = _SERIES_FIELDS | _OPTIONAL_SERIES_FIELDS
+    unknown = sorted(fields.keys() - allowed)
+    missing = sorted(_SERIES_FIELDS - _OPTIONAL_SERIES_FIELDS - fields.keys())
+    if unknown:
+        raise ValueError(f"Series {name!r}: unknown fields {unknown}")
+    if missing:
+        raise ValueError(f"Series {name!r}: missing fields {missing}")
+    request = SubsetRequest(
+        dataset_id=str(fields["dataset_id"]),
+        version=str(fields["version"]),
+        part=str(fields["part"]),
+        variables=tuple(str(v) for v in fields["variables"]),
+        start=_as_date(fields["start"], f"{name}.start"),
+        end=_as_date(fields["end"], f"{name}.end"),
+        minimum_latitude=fields.get("minimum_latitude"),
+    )
+    return Series(name=name, description=str(fields.get("description", "")), request=request)
+
+
+def load_ingest_config(path: Path) -> IngestConfig:
+    """Read the download configuration. Relative paths are resolved from the working
+    directory, which is the project root when the commands of the README are used."""
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("series"), dict) or not raw["series"]:
+        raise ValueError(f"{path}: expected 'data_directory' and a non-empty 'series' mapping")
+    unknown = sorted(raw.keys() - {"data_directory", "series"})
+    if unknown:
+        raise ValueError(f"{path}: unknown top-level fields {unknown}")
+    return IngestConfig(
+        data_directory=Path(raw.get("data_directory", "data/raw")),
+        series=tuple(_parse_series(str(name), fields) for name, fields in raw["series"].items()),
+    )
+
+
+def manifest_problems(series: Series, manifest: dict[str, Any]) -> list[str]:
+    """Differences between a series and the data manifest (empty when consistent).
+
+    The dataset, version, part and variables must exist in the manifest, and the period
+    must lie within the coverage recorded there.
+    """
+    request = series.request
+    prefix = f"{series.name} ({request.dataset_id})"
+    datasets = [d for d in manifest["datasets"] if d["dataset_id"] == request.dataset_id]
+    if not datasets:
+        return [f"{prefix}: dataset not in the manifest"]
+    versions = [v for v in datasets[0]["versions"] if v["version"] == request.version]
+    if not versions:
+        return [f"{prefix}: version {request.version} not in the manifest"]
+    parts = [p for p in versions[0]["parts"] if p["part"] == request.part]
+    if not parts:
+        return [f"{prefix}: part {request.part!r} not in the manifest"]
+
+    part = parts[0]
+    problems = []
+    available = {v["name"] for v in part["variables"]}
+    missing = [v for v in request.variables if v not in available]
+    if missing:
+        problems.append(f"{prefix}: variables {missing} not in the manifest")
+    (time,) = [c for c in part["coordinates"] if c["axis"] == "t"]
+    first, last = date.fromisoformat(time["minimum"]), date.fromisoformat(time["maximum"])
+    if not first <= request.start <= request.end <= last:
+        problems.append(
+            f"{prefix}: period {request.start}..{request.end} outside coverage {first}..{last}"
+        )
+    return problems
+
+
+def check_against_manifest(config: IngestConfig, manifest: dict[str, Any]) -> None:
+    """Raise ``ValueError`` listing every series that does not match the manifest."""
+    problems = [p for series in config.series for p in manifest_problems(series, manifest)]
+    if problems:
+        raise ValueError(
+            "Configuration does not match the data manifest:\n  " + "\n  ".join(problems)
+        )
+
+
+def clip(request: SubsetRequest, start: date | None, end: date | None) -> SubsetRequest | None:
+    """Restrict a request to ``start``..``end``; ``None`` when they do not overlap."""
+    first = max(request.start, start) if start else request.start
+    last = min(request.end, end) if end else request.end
+    if last < first:
+        return None
+    return replace(request, start=first, end=last)
+
+
+# --- Command line -------------------------------------------------------------
+
+
+def _parse_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {value!r}") from None
+
+
+def format_size(size_bytes: int) -> str:
+    """Human-readable size in decimal units: MB below one gigabyte, GB above."""
+    if size_bytes < 1e9:
+        return f"{size_bytes / 1e6:.1f} MB"
+    return f"{size_bytes / 1e9:.2f} GB"
+
+
+def _download(args: argparse.Namespace) -> None:
+    config = load_ingest_config(args.config)
+    manifest = yaml.safe_load(args.manifest.read_text(encoding="utf-8"))
+    check_against_manifest(config, manifest)
+    cache = ChunkCache(config.data_directory, CopernicusClient())
+
+    counts = {"downloaded": 0, "cached": 0}
+    total_bytes = 0
+
+    def report(result: CacheResult) -> None:
+        nonlocal total_bytes
+        counts[result.status] += 1
+        size = result.path.stat().st_size
+        total_bytes += size
+        print(f"  {result.chunk.label}  {result.status:<10}  {size / 1e6:7.1f} MB", flush=True)
+
+    for series in config.select(args.series):
+        request = clip(series.request, args.start, args.end)
+        if request is None:
+            print(f"{series.name}: no overlap with the requested period, skipped")
+            continue
+        print(f"{series.name}: {request.dataset_id} {request.start}..{request.end}")
+        cache.fetch_period(request, verify=args.verify, on_result=report)
+
+    print(
+        f"Done: {counts['downloaded']} downloaded, {counts['cached']} already cached, "
+        f"{format_size(total_bytes)} in {config.data_directory.as_posix()}"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m arctic_sea_ice.ingest",
-        description="Download Copernicus Marine sea ice data.",
+        description="Download Copernicus Marine sea ice data into the local month cache.",
     )
     parser.add_argument(
         "--check-login",
         action="store_true",
         help="verify the stored Copernicus Marine credentials and exit",
     )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="download the configured series (months already cached are skipped)",
+    )
+    parser.add_argument(
+        "--series",
+        nargs="+",
+        metavar="NAME",
+        help="only these series from the configuration (default: all)",
+    )
+    parser.add_argument(
+        "--start", type=_parse_date, help="limit to dates from YYYY-MM-DD (small subsets)"
+    )
+    parser.add_argument("--end", type=_parse_date, help="limit to dates up to YYYY-MM-DD")
+    parser.add_argument(
+        "--verify", action="store_true", help="recompute checksums of cached months"
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST_PATH)
     args = parser.parse_args(argv)
 
     if args.check_login:
@@ -397,6 +602,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         except CredentialsError as error:
             parser.exit(1, f"{error}\n")
         print("Copernicus Marine credentials are valid.")
+        return
+    if args.download:
+        try:
+            _download(args)
+        except (CredentialsError, ValueError) as error:
+            parser.exit(1, f"{error}\n")
         return
     parser.print_help()
 

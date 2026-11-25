@@ -10,20 +10,28 @@ temporary name and renamed only when complete, so an interrupted download never 
 truncated file that looks valid. Transient network errors are retried with exponential
 backoff.
 
+Data are cached as one NetCDF file per dataset part and calendar month, each with a JSON
+sidecar holding its provenance and SHA-256 checksum (``ChunkCache``). A rerun downloads
+only the months that are missing or no longer match the request.
+
 Run ``uv run python -m arctic_sea_ice.ingest --check-login`` to verify the login.
 """
 
 from __future__ import annotations
 
 import argparse
+import calendar
+import hashlib
 import importlib
+import json
 import logging
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
+from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +96,18 @@ class SubsetRequest:
             "overwrite": True,
             "raise_if_updating": True,
             "disable_progress_bar": True,
+        }
+
+    def to_record(self) -> dict[str, Any]:
+        """The request as plain values, as stored in the cache metadata."""
+        return {
+            "dataset_id": self.dataset_id,
+            "version": self.version,
+            "part": self.part,
+            "variables": list(self.variables),
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "minimum_latitude": self.minimum_latitude,
         }
 
 
@@ -198,6 +218,165 @@ class CopernicusClient:
             )
         partial.replace(output)
         return output
+
+
+# --- Year-month chunk cache ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MonthChunk:
+    """The part of one calendar month that falls inside a requested period."""
+
+    year: int
+    month: int
+    start: date
+    end: date
+
+    @property
+    def label(self) -> str:
+        return f"{self.year:04d}-{self.month:02d}"
+
+
+def month_chunks(start: date, end: date) -> list[MonthChunk]:
+    """Split ``start``..``end`` (inclusive) into calendar months.
+
+    The first and last chunks are clipped to the period, so a period starting on
+    25 October covers 25-31 October in its first chunk.
+    """
+    if end < start:
+        raise ValueError(f"End date {end} is before start date {start}")
+    chunks = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        first = date(year, month, 1)
+        last = date(year, month, calendar.monthrange(year, month)[1])
+        chunks.append(MonthChunk(year, month, max(first, start), min(last, end)))
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return chunks
+
+
+class Downloader(Protocol):
+    def download(self, request: SubsetRequest, output: Path) -> Path: ...
+
+
+@dataclass(frozen=True)
+class CacheResult:
+    """Outcome of fetching one month: ``downloaded`` now or already ``cached``."""
+
+    chunk: MonthChunk
+    path: Path
+    status: Literal["downloaded", "cached"]
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+class ChunkCache:
+    """Stores one NetCDF file per dataset part and calendar month under ``root``.
+
+    Layout: ``<root>/<dataset_id>/<version>/<part>/<YYYY>/<dataset_id>_<YYYY-MM>.nc``,
+    each file with a ``.json`` sidecar recording the request, the SHA-256 checksum, the
+    size, the download time and the toolbox version (acceptance criterion A).
+
+    A month counts as cached only if both files exist, the recorded request equals the
+    current one and the size matches; with ``verify=True`` the checksum is recomputed too.
+    Anything else is downloaded again, so changing the variables or the version in the
+    configuration never reuses stale files. The sidecar is written after the data file,
+    so an interruption between the two only causes a re-download.
+    """
+
+    def __init__(
+        self,
+        root: Path,
+        downloader: Downloader,
+        *,
+        clock: Callable[[], str] = _utc_now,
+    ) -> None:
+        self.root = root
+        self._downloader = downloader
+        self._clock = clock
+
+    def path_for(self, request: SubsetRequest) -> Path:
+        if (request.start.year, request.start.month) != (request.end.year, request.end.month):
+            raise ValueError("A cached request must lie within one calendar month")
+        label = f"{request.start.year:04d}-{request.start.month:02d}"
+        return (
+            self.root
+            / request.dataset_id
+            / request.version
+            / request.part
+            / f"{request.start.year:04d}"
+            / f"{request.dataset_id}_{label}.nc"
+        )
+
+    @staticmethod
+    def metadata_path(data_path: Path) -> Path:
+        return data_path.with_suffix(".json")
+
+    def is_cached(self, request: SubsetRequest, *, verify: bool = False) -> bool:
+        path = self.path_for(request)
+        metadata_path = self.metadata_path(path)
+        if not (path.is_file() and metadata_path.is_file()):
+            return False
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False
+        if metadata.get("request") != request.to_record():
+            return False
+        if metadata.get("size_bytes") != path.stat().st_size:
+            return False
+        return not verify or metadata.get("sha256") == sha256_of(path)
+
+    def fetch(
+        self, request: SubsetRequest, chunk: MonthChunk, *, verify: bool = False
+    ) -> CacheResult:
+        path = self.path_for(request)
+        if self.is_cached(request, verify=verify):
+            return CacheResult(chunk, path, "cached")
+        self._downloader.download(request, path)
+        self._write_metadata(request, path)
+        return CacheResult(chunk, path, "downloaded")
+
+    def fetch_period(
+        self,
+        template: SubsetRequest,
+        *,
+        verify: bool = False,
+        on_result: Callable[[CacheResult], None] | None = None,
+    ) -> list[CacheResult]:
+        """Fetch every month of ``template.start``..``template.end``, oldest first."""
+        results = []
+        for chunk in month_chunks(template.start, template.end):
+            request = replace(template, start=chunk.start, end=chunk.end)
+            result = self.fetch(request, chunk, verify=verify)
+            if on_result is not None:
+                on_result(result)
+            results.append(result)
+        return results
+
+    def _write_metadata(self, request: SubsetRequest, path: Path) -> None:
+        metadata = {
+            "request": request.to_record(),
+            "file": path.name,
+            "size_bytes": path.stat().st_size,
+            "sha256": sha256_of(path),
+            "downloaded_at": self._clock(),
+            "copernicusmarine_version": package_version("copernicusmarine"),
+        }
+        metadata_path = self.metadata_path(path)
+        temporary = metadata_path.with_name(f"{metadata_path.name}.tmp")
+        temporary.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(metadata_path)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

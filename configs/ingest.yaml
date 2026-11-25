@@ -1,0 +1,37 @@
+# What to download from Copernicus Marine (research plan, section 3).
+#
+# Checked against configs/data_manifest.yaml before any request: dataset, version, part,
+# variables and period must exist there.
+#
+# Core period decision (2026-11-25): 1979-2024 is the complete core period. The interim
+# record ends on 2025-09-29 in the catalogue, so 2025 is downloaded up to that date and
+# only indicators it fully covers are reported for 2025, marked as partial.
+#
+# Both series use the "default" part (latitude-longitude grid), because the 1979-2020
+# record is published only on that grid. The two grids differ (0.2 x 0.2 degrees vs.
+# 0.25 x 0.3 degrees); indicators use the real area of each cell, and the 2020/2021
+# transition is checked for discontinuities.
+#
+# status_flag is downloaded with ice_conc: it marks land, lakes and interpolated values,
+# needed for quality control.
+
+data_directory: data/raw
+
+series:
+  cdr:
+    description: OSI SAF sea ice concentration climate data record v3 (SMMR, SSM/I, SSMIS)
+    dataset_id: OSISAF-GLO-SEAICE_CONC_TIMESERIES-NH-LA-OBS
+    version: "202003"
+    part: default
+    variables: [ice_conc, status_flag]
+    start: 1979-01-01
+    end: 2020-12-31
+
+  icdr:
+    description: OSI SAF interim climate data record v3, continuation of the CDR
+    dataset_id: OSISAF-GLO-SEAICE_CONC_CONT_TIMESERIES-NH-LA-OBS
+    version: "202003"
+    part: default
+    variables: [ice_conc, status_flag]
+    start: 2021-01-01
+    end: 2025-09-29

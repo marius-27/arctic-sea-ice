@@ -80,6 +80,9 @@ minversion = "9.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true
+markers = [
+    "data: reads files downloaded into data/raw; skipped when they are absent (e.g. in CI)",
+]
 
 [tool.coverage.run]
 source = ["arctic_sea_ice"]

@@ -33,6 +33,9 @@ dist/
 .env.*
 !.env.example
 
+# Local progress notes (personal roadmap, not shared)
+docs/roadmap.txt
+
 # Downloaded satellite data
 data/raw/
 data/interim/

@@ -47,6 +47,8 @@ uv sync            # creates .venv and installs the locked dependencies
 | Type check | `uv run python -m mypy` |
 | All pre-commit hooks | `uv run pre-commit run --all-files` |
 | Verify the lock file | `uv lock --check` |
+| List the Copernicus products | `uv run python -m arctic_sea_ice.catalog` |
+| Regenerate the data manifest | `uv run python -m arctic_sea_ice.catalog --manifest` |
 
 The same checks run in GitHub Actions on every pull request
 (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).

@@ -7,7 +7,10 @@ authors = [
     { name = "MariusMunteanu", email = "mmunteanu54321@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "copernicusmarine>=2.5.2",
+    "pyyaml>=6.0.4",
+]
 
 [project.scripts]
 arctic-sea-ice = "arctic_sea_ice:main"
@@ -22,7 +25,6 @@ dev = [
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
-    "pyyaml>=6.0.4",
     "ruff>=0.17.6",
     "types-pyyaml>=6.0",
 ]
@@ -63,6 +65,11 @@ disallow_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# copernicusmarine ships without type information (no py.typed marker).
+[[tool.mypy.overrides]]
+module = "copernicusmarine"
+ignore_missing_imports = true
 
 # --- Testing ----------------------------------------------------------------
 

@@ -41,7 +41,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "copernicusmarine" },
+    { name = "numpy" },
     { name = "pyyaml" },
+    { name = "xarray" },
 ]
 
 [package.dev-dependencies]
@@ -57,7 +59,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "copernicusmarine", specifier = ">=2.5.2" },
+    { name = "numpy", specifier = ">=2.5.5" },
     { name = "pyyaml", specifier = ">=6.0.4" },
+    { name = "xarray", specifier = ">=2026.9.0" },
 ]
 
 [package.metadata.requires-dev]

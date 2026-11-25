@@ -21,6 +21,7 @@ data discovery → ingestion → quality control → indicators → statistics �
 |---|---|
 | [Scientific scope](docs/scientific-scope.md) | Research question, hypotheses, definitions, data products, methodology, acceptance criteria |
 | [Repository guide](docs/repository-guide.md) | Repository layout, branch plan, commit conventions, data policy, CI |
+| [Data provenance and licences](docs/data-provenance.md) | Data sources and DOIs, download records, Copernicus Marine and EUMETSAT licence terms |
 | [Research plan (PDF, Romanian)](docs/Proiect_1_Arctic_Sea_Ice_Research_Plan.pdf) | The original research plan; the primary reference for this project |
 
 ## Requirements
@@ -49,6 +50,8 @@ uv sync            # creates .venv and installs the locked dependencies
 | Verify the lock file | `uv lock --check` |
 | List the Copernicus products | `uv run python -m arctic_sea_ice.catalog` |
 | Regenerate the data manifest | `uv run python -m arctic_sea_ice.catalog --manifest` |
+| Check the Copernicus login | `uv run python -m arctic_sea_ice.ingest --check-login` |
+| Download the data (~10 GB) | `uv run python -m arctic_sea_ice.ingest --download` |
 
 The same checks run in GitHub Actions on every pull request
 (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).

@@ -11,6 +11,7 @@ DOCUMENTS = [
     PROJECT_ROOT / "README.md",
     PROJECT_ROOT / "docs" / "scientific-scope.md",
     PROJECT_ROOT / "docs" / "repository-guide.md",
+    PROJECT_ROOT / "docs" / "data-provenance.md",
 ]
 
 # Markdown inline links: [text](target)

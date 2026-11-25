@@ -62,6 +62,12 @@ before any download.
 
 - **Core period:** 1979–2025, with an explicit continuity check at the transition between
   the climate data record (CDR) and the interim record (ICDR).
+- **Coverage of 2025 (decision of 2026-11-25):** in the Copernicus Marine catalogue the
+  interim record ends on 2025-09-29, so October–December 2025 are missing. The complete
+  core period is therefore **1979–2024**. For 2025, only indicators fully covered by the
+  data are reported (for example the September minimum), and they are marked as partial.
+  The gap is tracked by a strict `xfail` test on the data manifest, which fails as soon
+  as the catalogue extends the record.
 - **Optional period:** a separate 2002–2026 series from the AMSR/ICDR family.
   Heterogeneous products are not merged without evaluation.
 - **Domain:** the maritime Northern Hemisphere defined by the product grid, excluding

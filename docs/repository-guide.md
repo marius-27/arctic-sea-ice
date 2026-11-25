@@ -10,9 +10,12 @@ Current layout:
 ```text
 arctic-sea-ice/
 ├── .github/workflows/ci.yml   CI: lock check, pre-commit, mypy, pytest
-├── configs/data_manifest.yaml generated data manifest (datasets, versions, schema)
-├── docs/                      research plan (PDF), scientific scope, this guide
-├── src/arctic_sea_ice/        the Python package
+├── configs/
+│   ├── data_manifest.yaml     generated data manifest (datasets, versions, schema)
+│   └── ingest.yaml            what to download (series, versions, periods)
+├── data/raw/                  downloaded monthly NetCDF files (ignored by Git)
+├── docs/                      research plan (PDF), scientific scope, provenance, this guide
+├── src/arctic_sea_ice/        the Python package: catalog.py, ingest.py
 ├── tests/                     pytest test suite
 ├── .pre-commit-config.yaml    pre-commit hooks
 ├── pyproject.toml             project metadata, dependencies, tool configuration
@@ -24,7 +27,7 @@ Planned additions (research plan, section 9), created in the stage that first ne
 | Path | Contents | Stage |
 |---|---|---|
 | `configs/` | `regions.geojson` | seasonal anomalies |
-| `src/arctic_sea_ice/` | `ingest.py`, `qc.py`, `metrics.py`, `trends.py` | one module per stage |
+| `src/arctic_sea_ice/` | `qc.py`, `metrics.py`, `trends.py` | one module per stage |
 | `notebooks/` | `01_explore.ipynb`, `02_research.ipynb` | exploration and research |
 | `reports/` | `results.md`, `methods.md`, `comparison.csv` | benchmark and final report |
 | `reports/figures/` | versioned figures (no raw data) | maps and dashboard |
@@ -126,7 +129,8 @@ strict `xfail` tests, which fail as soon as the catalogue closes the gap.
 - Downloaded data lives under `data/` and `.cache/`, which are ignored by Git.
 - The `check-added-large-files` hook rejects files larger than 1 MB.
 - Every dataset used is recorded with product ID, dataset ID, version and access date
-  (acceptance criterion A).
+  (acceptance criterion A). Each downloaded month has a JSON record with its request,
+  checksum and download time; see [data provenance and licences](data-provenance.md).
 - Copernicus Marine credentials are never committed. They are stored with
   `copernicusmarine login` or in a local `.env` file, which is ignored by Git.
 - Reports and figures are committed; raw and intermediate data are not.
